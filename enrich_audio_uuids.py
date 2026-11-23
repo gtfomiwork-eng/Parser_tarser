@@ -41,6 +41,18 @@ def numbers(s):
     return set(re.findall(r"\d+", yb.norm(s)))
 
 
+def fetch_all(build, page=1000):
+    """Выгрузка всех строк постранично: Supabase отдаёт не больше 1000 строк за запрос
+    (настройка Max Rows), поэтому .limit(5000) / .limit(100000) молча обрезаются."""
+    rows, start = [], 0
+    while True:
+        chunk = build().order("id").range(start, start + page - 1).execute().data
+        rows += chunk
+        if len(chunk) < page:
+            return rows
+        start += page
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=200, help="макс. карточек ЭК за запуск")
@@ -52,16 +64,15 @@ def main():
     sb = create_client(url, key)
 
     # Аудио без uuid и без прежней пометки о неоднозначности
-    audios = sb.table("books").select("id, asta, author, title") \
-        .eq("edition_type", "audiobooks").is_("uuid", "null") \
-        .is_("pair_note", "null").eq("availability", "active") \
-        .limit(5000).execute().data
+    audios = fetch_all(lambda: sb.table("books").select("id, asta, author, title")
+        .eq("edition_type", "audiobooks").is_("uuid", "null")
+        .is_("pair_note", "null").eq("availability", "active"))
     print(f"Аудиокниг без uuid: {len(audios)}")
 
     # Все ЭК/комиксы с uuid — индексируем по (авторы, название)
-    texts = sb.table("books").select("id, asta, author, title, uuid, edition_type") \
-        .in_("edition_type", ["books", "comicbooks"]).not_.is_("uuid", "null") \
-        .limit(100000).execute().data
+    texts = fetch_all(lambda: sb.table("books").select("id, asta, author, title, uuid, edition_type")
+        .in_("edition_type", ["books", "comicbooks"]).not_.is_("uuid", "null"))
+    print(f"ЭК/комиксов с uuid в индексе: {len(texts)}")
     index = {}
     for t in texts:
         index.setdefault((norm_authors(t["author"]), norm_title(t["title"])), []).append(t)
